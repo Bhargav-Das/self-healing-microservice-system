@@ -1,0 +1,33 @@
+
+services:
+
+  order-service:
+    build:
+      context: ./services/order-service
+    container_name: order-service
+    ports:
+      - "127.0.0.1:8001:8001"
+    networks:
+      - microservice-network
+
+  inventory-service:
+    build:
+      context: ./services/inventory-service
+    container_name: inventory-service
+    ports:
+      - "127.0.0.1:8002:8002"
+    networks:
+      - microservice-network
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+    container_name: notification-service
+    ports:
+      - "127.0.0.1:8003:8003"
+    networks:
+      - microservice-network
+
+networks:
+  microservice-network:
+    driver: bridge
