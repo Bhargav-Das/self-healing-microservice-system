@@ -3,11 +3,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY services/order-service/requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py .
+COPY database/ ./database/
+COPY services/order-service/main.py ./main.py
 
 EXPOSE 8001
 

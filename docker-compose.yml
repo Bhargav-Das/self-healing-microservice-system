@@ -1,21 +1,65 @@
 
 services:
 
+  postgres:
+    image: postgres:16
+    container_name: self-healing-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - microservice-network
+
   order-service:
     build:
-      context: ./services/order-service
+      context: .
+      dockerfile: services/order-service/Dockerfile
     container_name: order-service
     ports:
       - "127.0.0.1:8001:8001"
+    
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - microservice-network
 
   inventory-service:
     build:
-      context: ./services/inventory-service
+      context: .
+      dockerfile: services/inventory-service/Dockerfile
     container_name: inventory-service
     ports:
       - "127.0.0.1:8002:8002"
+  
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - microservice-network
 
@@ -31,3 +75,6 @@ services:
 networks:
   microservice-network:
     driver: bridge
+
+volumes:
+  postgres_data:
