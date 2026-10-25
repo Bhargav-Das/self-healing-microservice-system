@@ -13,6 +13,8 @@ COPY services/order-service/main.py ./main.py
 
 COPY services/order-service/outbox_worker.py ./outbox_worker.py
 
+COPY services/order-service/circuit_breaker.py ./circuit_breaker.py
+
 EXPOSE 8001
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]

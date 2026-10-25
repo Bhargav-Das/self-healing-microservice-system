@@ -9,6 +9,10 @@ from sqlalchemy import select, or_
 
 from database.db import SessionLocal
 from database.models import NotificationOutbox, Order
+from circuit_breaker import (
+    CircuitBreaker,
+    CircuitOpenError,
+)
 
 
 logging.basicConfig(
@@ -24,7 +28,12 @@ NOTIFICATION_URL = os.getenv(
 )
 
 MAX_ATTEMPTS = 5
-POLL_INTERVAL = 3
+POLL_INTERVAL = 1
+
+breaker = CircuitBreaker(
+    failure_threshold=3,
+    recovery_timeout=10,
+)
 
 
 def utc_now():
@@ -33,7 +42,6 @@ def utc_now():
 
 def process_outbox():
     with SessionLocal() as db:
-
         now = utc_now()
 
         jobs = db.scalars(
@@ -61,6 +69,17 @@ def process_outbox():
                 continue
 
             try:
+                breaker.allow_request()
+
+            except CircuitOpenError:
+                # Do not count blocked requests as delivery attempts
+                job.next_attempt_at = (
+                    utc_now() + timedelta(seconds=2)
+                )
+                db.commit()
+                continue
+
+            try:
                 response = httpx.post(
                     f"{NOTIFICATION_URL}/notifications",
                     json={
@@ -70,10 +89,12 @@ def process_outbox():
                             f"{order.product_name}"
                         )
                     },
-                    timeout=2.0
+                    timeout=2.0,
                 )
 
                 response.raise_for_status()
+
+                breaker.record_success()
 
                 job.status = "DELIVERED"
                 job.delivered_at = utc_now()
@@ -82,21 +103,25 @@ def process_outbox():
 
                 logger.info(
                     "NOTIFICATION_DELIVERED order_id=%s",
-                    order.id
+                    order.id,
                 )
 
             except httpx.HTTPError as error:
+                breaker.record_failure()
+
                 job.attempts += 1
                 job.last_error = str(error)
 
                 if job.attempts >= MAX_ATTEMPTS:
                     job.status = "FAILED"
                     job.next_attempt_at = None
+
                 else:
                     delay = min(2 ** job.attempts, 60)
 
                     job.next_attempt_at = (
-                        utc_now() + timedelta(seconds=delay)
+                        utc_now()
+                        + timedelta(seconds=delay)
                     )
 
                     job.status = "RETRY"
@@ -104,14 +129,14 @@ def process_outbox():
                 logger.warning(
                     "NOTIFICATION_RETRY order_id=%s attempts=%s",
                     order.id,
-                    job.attempts
+                    job.attempts,
                 )
 
             db.commit()
 
 
 def main():
-    logger.info("Outbox worker started")
+    logger.info("Outbox Worker started")
 
     while True:
         try:
