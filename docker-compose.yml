@@ -99,6 +99,33 @@ services:
         condition: service_started
     networks:
       - microservice-network
+
+  outbox-worker:
+    build:
+      context: .
+      dockerfile: services/order-service/Dockerfile
+
+    container_name: outbox-worker
+
+    command:
+      - python
+      - outbox_worker.py
+
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      NOTIFICATION_URL: http://notification-service:8003
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      notification-service:
+        condition: service_started
+
+    networks:
+      - microservice-network
       
 networks:
   microservice-network:

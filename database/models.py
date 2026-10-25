@@ -126,6 +126,12 @@ class Order(Base):
         String(30), default="CREATED"
     )
 
+    # Prevent duplicate orders on repeated requests
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(100),
+        unique=True,
+        nullable=True
+    )
 
 class InventoryItem(Base):
     __tablename__ = "inventory_items"
@@ -138,4 +144,51 @@ class InventoryItem(Base):
     )
     quantity: Mapped[int] = mapped_column(
         Integer, nullable=False
+    )
+
+
+class NotificationOutbox(Base):
+    __tablename__ = "notification_outbox"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True
+    )
+
+    order_id: Mapped[int] = mapped_column(
+        ForeignKey("orders.id"),
+        nullable=False
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(30),
+        default="PENDING",
+        nullable=False
+    )
+
+    attempts: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        nullable=False
+    )
+
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    last_error: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True
+    )
+
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
     )

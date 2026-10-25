@@ -1,23 +1,39 @@
 
 from datetime import datetime, timezone
+from typing import Annotated
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database.db import get_db
-from database.models import Order
+from database.models import Order, NotificationOutbox
 
 
 app = FastAPI(
     title="Order Service",
-    version="2.0.0"
+    version="3.0.0"
 )
 
 
 class OrderCreate(BaseModel):
-    product_name: str = Field(min_length=1, max_length=100)
+    product_name: str = Field(
+        min_length=1,
+        max_length=100
+    )
     quantity: int = Field(gt=0)
+
+
+def order_response(order, replayed=False):
+    return {
+        "id": order.id,
+        "product_name": order.product_name,
+        "quantity": order.quantity,
+        "status": order.status,
+        "replayed": replayed
+    }
 
 
 @app.get("/")
@@ -37,37 +53,97 @@ def health():
 @app.post("/orders", status_code=201)
 def create_order(
     data: OrderCreate,
+    idempotency_key: Annotated[
+        str, Header(alias="Idempotency-Key")
+    ],
     db: Session = Depends(get_db)
 ):
+    key = idempotency_key.strip()
+
+    if not key or len(key) > 100:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid Idempotency-Key"
+        )
+
+    existing = db.scalar(
+        select(Order).where(
+            Order.idempotency_key == key
+        )
+    )
+
+    if existing:
+        if (
+            existing.product_name != data.product_name
+            or existing.quantity != data.quantity
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Idempotency key reused with different data"
+            )
+
+        return order_response(existing, replayed=True)
+
     order = Order(
         product_name=data.product_name,
         quantity=data.quantity,
-        status="CREATED"
+        status="CREATED",
+        idempotency_key=key
     )
 
-    db.add(order)
-    db.commit()
-    db.refresh(order)
+    try:
+        db.add(order)
+        db.flush()
 
-    return {
-        "id": order.id,
-        "product_name": order.product_name,
-        "quantity": order.quantity,
-        "status": order.status
-    }
+        notification = NotificationOutbox(
+            order_id=order.id,
+            status="PENDING",
+            attempts=0
+        )
+
+        db.add(notification)
+
+        # Both records are committed together
+        db.commit()
+        db.refresh(order)
+
+    except IntegrityError:
+        db.rollback()
+
+        existing = db.scalar(
+            select(Order).where(
+                Order.idempotency_key == key
+            )
+        )
+
+        if existing is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Order creation conflict"
+            )
+
+        if (
+            existing.product_name != data.product_name
+            or existing.quantity != data.quantity
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Idempotency key reused with different data"
+            )
+
+        return order_response(existing, replayed=True)
+
+    return order_response(order, replayed=False)
 
 
 @app.get("/orders")
 def list_orders(db: Session = Depends(get_db)):
-    orders = db.query(Order).order_by(Order.id).all()
+    orders = db.scalars(
+        select(Order).order_by(Order.id)
+    ).all()
 
     return [
-        {
-            "id": order.id,
-            "product_name": order.product_name,
-            "quantity": order.quantity,
-            "status": order.status
-        }
+        order_response(order)
         for order in orders
     ]
 
@@ -85,9 +161,4 @@ def get_order(
             detail="Order not found"
         )
 
-    return {
-        "id": order.id,
-        "product_name": order.product_name,
-        "quantity": order.quantity,
-        "status": order.status
-    }
+    return order_response(order)

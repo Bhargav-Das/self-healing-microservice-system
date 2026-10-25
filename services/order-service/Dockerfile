@@ -8,7 +8,10 @@ COPY services/order-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY database/ ./database/
+
 COPY services/order-service/main.py ./main.py
+
+COPY services/order-service/outbox_worker.py ./outbox_worker.py
 
 EXPOSE 8001
 
